@@ -7,10 +7,16 @@ Miyazaki-style 80s/90s Chinese life micro-film scripts.
 
 运行命令 / Run command:
     streamlit run app.py
+
+环境变量 / Environment variable:
+    DEEPSEEK_API_KEY=your_key_here streamlit run app.py
 """
 
+import os
+import json
 import streamlit as st
 import pandas as pd
+from openai import OpenAI
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -43,112 +49,78 @@ SYSTEM_PROMPT_TEMPLATE = """
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 【MOCK 函数】模拟 LLM 返回数据，用于本地预览界面
-#
-# ⚠️  TODO: 接入真实 LLM 的位置在这里！
-#    将 `mock_generate_script(theme)` 函数替换为下方的
-#    `llm_generate_script(theme)` 函数即可。
-#    支持的接入方式：
-#      - OpenAI API:    client.chat.completions.create(...)
-#      - Claude API:    anthropic.Anthropic().messages.create(...)
-#      - 本地 Ollama:   requests.post("http://localhost:11434/api/chat", ...)
+# 【DeepSeek 配置】API 客户端初始化
+# Key 通过环境变量读取，绝不硬编码
 # ─────────────────────────────────────────────────────────────────────────────
 
-def mock_generate_script(theme: str) -> list[dict]:
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_MODEL    = "deepseek-chat"   # DeepSeek 当前旗舰模型
+
+
+def _get_client() -> OpenAI:
+    """创建并返回指向 DeepSeek API 的 OpenAI 兼容客户端。"""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "未检测到 DEEPSEEK_API_KEY 环境变量。\n"
+            "请先执行：export DEEPSEEK_API_KEY=your_key_here"
+        )
+    return OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 【真实 LLM 函数】调用 DeepSeek V4 Pro 生成分镜脚本
+# ─────────────────────────────────────────────────────────────────────────────
+
+def llm_generate_script(theme: str) -> list[dict]:
     """
-    【Mock 函数】返回硬编码的假数据，用于点亮界面和验证布局。
-    主题参数会被嵌入到第一行台词中，让演示更真实。
+    调用 DeepSeek API，根据主题生成微电影分镜脚本。
+
+    流程：
+      1. 从环境变量读取 API Key，构建 OpenAI 兼容客户端
+      2. 用 SYSTEM_PROMPT_TEMPLATE 填充用户主题，构建完整 Prompt
+      3. 以 JSON 模式请求 DeepSeek，要求模型严格返回 JSON 数组
+      4. 解析并做兼容性处理后返回 list[dict]
+
+    Returns:
+        list[dict]，每个元素含 shot_id / visual / narration 三个字段
     """
-    return [
-        {
-            "shot_id": "01",
-            "visual": (
-                "Wide shot, a narrow alley in a Chinese city circa 1990. "
-                "An old man operates a popcorn cannon machine (爆米花机) on the street corner. "
-                "Warm golden late-afternoon sunlight filters through plane trees, "
-                "casting dappled shadows. Film grain texture, Studio Ghibli color palette, "
-                "soft bokeh background of brick walls and clotheslines. 4:3 aspect ratio."
-            ),
-            "narration": f"那年夏天，{theme}的香气飘满了整条胡同。",
-        },
-        {
-            "shot_id": "02",
-            "visual": (
-                "Close-up, a child's bare feet standing on warm concrete pavement. "
-                "Worn plastic sandals beside them. A 5-jiao coin clutched in small fingers. "
-                "Shallow depth of field, warm amber tones, nostalgic film grain, "
-                "Miyazaki-style delicate line quality in background details."
-            ),
-            "narration": "手心里攥着妈妈给的五毛钱，心跳得很快。",
-        },
-        {
-            "shot_id": "03",
-            "visual": (
-                "Medium shot, a group of neighborhood children crowding around the vendor, "
-                "eyes wide with anticipation. Vintage Chinese thermos bottles and enamel basins "
-                "visible in doorways. Dust particles float in golden light beams. "
-                "Warm sepia overlay, hand-painted feel, early 1990s Beijing hutong atmosphere."
-            ),
-            "narration": "\"砰！\"的一声，白色的烟雾像云朵一样散开来。",
-        },
-        {
-            "shot_id": "04",
-            "visual": (
-                "Slow pull-back aerial-style shot, the alley stretching into the distance "
-                "at dusk. Paper lanterns beginning to glow in shop fronts. A cat sitting "
-                "on a low wall watches the children run home. Sky painted in violet and orange. "
-                "Dreamy Ghibli twilight, nostalgic vignette, 16mm film emulation."
-            ),
-            "narration": "多年以后，我才明白，那不只是爆米花的香气，是整个童年。",
-        },
-        {
-            "shot_id": "05",
-            "visual": (
-                "Extreme close-up, a small hand holding a brown paper bag of popcorn. "
-                "Steam rising gently. Soft focus background of the alley fading to memory. "
-                "Warm cream and golden tones, timeless nostalgic feel, "
-                "Studio Ghibli still-frame quality, subtle lens flare."
-            ),
-            "narration": "（画外音）有些味道，是回不去的时光。",
-        },
-    ]
+    client = _get_client()
+    prompt = SYSTEM_PROMPT_TEMPLATE.format(theme=theme)
 
+    response = client.chat.completions.create(
+        model=DEEPSEEK_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "你是一位专业的微电影编剧。"
+                    "请严格按照用户要求，以纯 JSON 格式返回分镜脚本，"
+                    "不要附加任何解释性文字或 markdown 代码块标记。"
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.85,
+        max_tokens=3000,
+    )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 【TODO 模板】未来接入真实 LLM 时，用这个函数替换上面的 mock_generate_script
-# ─────────────────────────────────────────────────────────────────────────────
+    raw = response.choices[0].message.content
 
-# def llm_generate_script(theme: str) -> list[dict]:
-#     """
-#     真实 LLM 调用函数。
-#     步骤：
-#       1. 用 SYSTEM_PROMPT_TEMPLATE 构建完整 Prompt
-#       2. 调用 LLM API（OpenAI / Claude / Ollama 等）
-#       3. 解析返回的 JSON 字符串为 Python list[dict]
-#       4. 返回结构化数据
-#     """
-#     import os, json
-#     from openai import OpenAI  # pip install openai
-#
-#     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-#     prompt = SYSTEM_PROMPT_TEMPLATE.format(theme=theme)
-#
-#     response = client.chat.completions.create(
-#         model="gpt-4o",
-#         messages=[
-#             {"role": "system", "content": "你是一位专业的微电影编剧。"},
-#             {"role": "user",   "content": prompt},
-#         ],
-#         response_format={"type": "json_object"},
-#         temperature=0.85,
-#     )
-#
-#     raw = response.choices[0].message.content
-#     data = json.loads(raw)
-#     # LLM 可能把数组包在某个 key 里，做一层兼容处理
-#     if isinstance(data, list):
-#         return data
-#     return data.get("shots") or data.get("script") or list(data.values())[0]
+    # ── 解析 JSON，兼容模型将数组包裹在不同 key 里的情况 ──────────────────────
+    data = json.loads(raw)
+    if isinstance(data, list):
+        return data
+    # 尝试常见 key 名
+    for key in ("shots", "script", "scenes", "storyboard", "分镜"):
+        if key in data and isinstance(data[key], list):
+            return data[key]
+    # 兜底：取第一个 list 类型的值
+    for v in data.values():
+        if isinstance(v, list):
+            return v
+    raise ValueError(f"无法从 LLM 响应中解析出分镜数组，原始内容：\n{raw}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -257,15 +229,15 @@ def main():
             st.warning("⚠️ 请先输入一个怀旧主题，再点击生成按钮。")
             return
 
-        with st.spinner("🎞️ 正在调取记忆碎片，构建分镜脚本…"):
-            # ──────────────────────────────────────────────────────────────────
-            # ⚠️  【LLM 接入点】
-            # 当前调用的是 Mock 函数，返回假数据。
-            # 当你准备好接入真实 LLM 时：
-            #   1. 取消注释上方的 `llm_generate_script` 函数
-            #   2. 将下面这行改为：shots = llm_generate_script(theme)
-            # ──────────────────────────────────────────────────────────────────
-            shots = mock_generate_script(theme)
+        with st.spinner("🎞️ 正在连接 DeepSeek，召唤记忆碎片…"):
+            try:
+                shots = llm_generate_script(theme)
+            except EnvironmentError as e:
+                st.error(f"🔑 **API Key 未配置**\n\n{e}")
+                return
+            except Exception as e:
+                st.error(f"❌ **生成失败**，请检查网络或 API Key 是否有效。\n\n错误详情：`{e}`")
+                return
 
         # ── 结果展示 ──────────────────────────────────────────────────────────
         st.success(f"✅ 脚本生成完毕！共 {len(shots)} 个分镜头")
@@ -300,7 +272,7 @@ def main():
                 3. 📋 以表格形式输出每个分镜的视觉描述和台词
                 4. 🎨 将视觉描述复制到 AI 绘图工具，生成概念图
 
-                **当前状态：** Mock 演示模式（可一键切换为真实 LLM）
+                **当前状态：** 已接入 DeepSeek API（`deepseek-chat` 模型）
                 """
             )
 
