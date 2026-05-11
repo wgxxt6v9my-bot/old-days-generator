@@ -1,0 +1,12 @@
+# 怀旧微电影脚本生成器 - 依赖清单
+# 运行命令: pip install -r requirements.txt
+
+# ── 核心框架 ──────────────────────────────────────────────
+streamlit>=1.35.0       # Web UI 框架
+pandas>=2.0.0           # 表格数据处理
+
+# ── 未来接入 LLM 时按需取消注释 ──────────────────────────
+# openai>=1.30.0        # OpenAI GPT-4o / GPT-4 API
+# anthropic>=0.25.0     # Anthropic Claude API
+# requests>=2.31.0      # 本地 Ollama HTTP 调用
+# python-dotenv>=1.0.0  # 从 .env 文件读取 API Key
